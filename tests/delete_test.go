@@ -2,10 +2,13 @@ package tests_test
 
 import (
 	"errors"
+	"log"
+	"os"
 	"testing"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"gorm.io/gorm/logger"
 	. "gorm.io/gorm/utils/tests"
 )
 
@@ -254,5 +257,214 @@ func TestDeleteReturning(t *testing.T) {
 	DB.Model(&Company{}).Where("name IN ?", []string{companies[0].Name, companies[1].Name, companies[2].Name}).Count(&count)
 	if count != 1 {
 		t.Errorf("failed to delete data, current count %v", count)
+	}
+}
+
+func TestNestedDelete(t *testing.T) {
+	DB.Logger = logger.New(log.New(os.Stdout, "\r\n", log.LstdFlags), logger.Config{
+		SlowThreshold:             1,
+		LogLevel:                  logger.Info,
+		IgnoreRecordNotFoundError: false,
+		Colorful:                  true,
+	})
+	// user has 2 pets, 2 friends, 1 manager, 2 team
+	// use's pets has toy
+	// friend has 1 pets, 1 toys, 1 tools, 1 account
+	// team has 2 pets, 2 toys, 2 tools, 1 account
+	// manager has 3 pets, 3 toys, 3 tools, 1 account
+	user := User{
+		Name: "nest-delete-user",
+		Age:  18,
+		Account: Account{
+			Number: "nest-delete-user-account",
+		},
+		Pets: []*Pet{
+			{
+				Name: "nest-delete-user-pet1",
+				Toy: Toy{
+					Name: "nest-delete-user-pet1-toy",
+				},
+			},
+			{
+				Name: "nest-delete-user-pet2",
+				Toy: Toy{
+					Name: "nest-delete-user-pet2-toy",
+				},
+			},
+		},
+		Manager: &User{
+			Name: "nest-delete-user-manager",
+			Account: Account{
+				Number: "nest-delete-user-manager-account",
+			},
+			Pets: []*Pet{
+				{
+					Name: "nest-delete-user-manager-pet1",
+					Toy: Toy{
+						Name: "nest-delete-user-manager-pet1-toy",
+					},
+				},
+				{
+					Name: "nest-delete-user-manager-pet2",
+					Toy: Toy{
+						Name: "nest-delete-user-manager-pet2-toy",
+					},
+				},
+				{
+					Name: "nest-delete-user-manager-pet3",
+					Toy: Toy{
+						Name: "nest-delete-user-manager-pet3-toy",
+					},
+				},
+			},
+			Toys: []Toy{
+				{
+					Name: "nest-delete-user-manager-toy1",
+				},
+				{
+					Name: "nest-delete-user-manager-toy2",
+				},
+				{
+					Name: "nest-delete-user-manager-toy3",
+				},
+			},
+			Tools: []Tools{
+				{
+					Name: "nest-delete-user-manager-tool1",
+				},
+				{
+					Name: "nest-delete-user-manager-tool2",
+				},
+				{
+					Name: "nest-delete-user-manager-tool3",
+				},
+			},
+		},
+		Team: []User{
+			{
+				Name: "nest-delete-user-team1",
+				Account: Account{
+					Number: "nest-delete-user-team1-account",
+				},
+				Pets: []*Pet{
+					{
+						Name: "nest-delete-user-team1-pet1",
+					},
+					{
+						Name: "nest-delete-user-team1-pet2",
+					},
+				},
+				Toys: []Toy{
+					{
+						Name: "nest-delete-user-team1-toy1",
+					},
+					{
+						Name: "nest-delete-user-team1-toy2",
+					},
+				},
+				Tools: []Tools{
+					{
+						Name: "nest-delete-user-team1-tool1",
+					},
+					{
+						Name: "nest-delete-user-team1-tool2",
+					},
+				},
+			},
+			{
+				Name: "nest-delete-user-team2",
+				Account: Account{
+					Number: "nest-delete-user-team2-account",
+				},
+				Pets: []*Pet{
+					{
+						Name: "nest-delete-user-team2-pet1",
+					},
+					{
+						Name: "nest-delete-user-team2-pet2",
+					},
+				},
+				Toys: []Toy{
+					{
+						Name: "nest-delete-user-team2-toy1",
+					},
+					{
+						Name: "nest-delete-user-team2-toy2",
+					},
+				},
+				Tools: []Tools{
+					{
+						Name: "nest-delete-user-team2-tool1",
+					},
+					{
+						Name: "nest-delete-user-team2-tool2",
+					},
+				},
+			},
+		},
+		Friends: []*User{
+			{
+				Name: "nest-delete-user-friend1",
+				Account: Account{
+					Number: "nest-delete-user-friend1-account",
+				},
+				Pets: []*Pet{
+					{
+						Name: "nest-delete-user-friend1-pet1",
+					},
+				},
+				Toys: []Toy{
+					{
+						Name: "nest-delete-user-friend1-toy1",
+					},
+				},
+				Tools: []Tools{
+					{
+						Name: "nest-delete-user-friend1-tool1",
+					},
+				},
+			},
+			{
+				Name: "nest-delete-user-friend2",
+				Account: Account{
+					Number: "nest-delete-user-friend2-account",
+				},
+				Pets: []*Pet{
+					{
+						Name: "nest-delete-user-friend2-pet1",
+					},
+				},
+				Toys: []Toy{
+					{
+						Name: "nest-delete-user-friend2-toy1",
+					},
+				},
+				Tools: []Tools{
+					{
+						Name: "nest-delete-user-friend2-tool1",
+					},
+				},
+			},
+		},
+	}
+
+	if err := DB.Create(&user).Error; err != nil {
+		t.Fatalf("failed to create user1, got error %v", err)
+	}
+
+	if err := DB.Select("Pets.Toy").Delete(&user).Error; err != nil {
+		t.Fatalf("failed to delete user, got error %v", err)
+	}
+
+	for key, value := range map[string]int64{"Account": 1, "Pets": 2, "Toys": 4, "Company": 1, "Manager": 1, "Team": 1, "Languages": 0, "Friends": 0} {
+		if count := DB.Unscoped().Model(&user).Association(key).Count(); count != value {
+			t.Errorf("user's %v expects: %v, got %v", key, value, count)
+		}
+	}
+
+	for key, value := range map[string]int64{"Account": 0, "Pets": 0, "Toys": 0, "Company": 1, "Manager": 1, "Team": 0, "Languages": 0, "Friends": 0} {
+		if count := DB.Model(&user).Association(key).Count(); count != value {
+			t.Errorf("user's %v expects: %v, got %v", key, value, count)
+		}
 	}
 }

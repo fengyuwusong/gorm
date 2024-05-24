@@ -1,11 +1,14 @@
 package tests_test
 
 import (
+	"log"
+	"os"
 	"regexp"
 	"sort"
 	"testing"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 	. "gorm.io/gorm/utils/tests"
 )
 
@@ -357,7 +360,12 @@ func TestNestedJoins(t *testing.T) {
 	for _, user := range users {
 		userIDs = append(userIDs, user.ID)
 	}
-
+	DB.Logger = logger.New(log.New(os.Stdout, "\r\n", log.LstdFlags), logger.Config{
+		SlowThreshold:             1,
+		LogLevel:                  logger.Info,
+		IgnoreRecordNotFoundError: false,
+		Colorful:                  true,
+	})
 	var users2 []User
 	if err := DB.
 		Joins("Manager").

@@ -4,7 +4,6 @@ import (
 	"log"
 	"math/rand"
 	"os"
-	"path/filepath"
 	"time"
 
 	"gorm.io/driver/mysql"
@@ -86,7 +85,7 @@ func OpenTestConnection(cfg *gorm.Config) (db *gorm.DB, err error) {
 		db, err = gorm.Open(mysql.Open(dbDSN), cfg)
 	default:
 		log.Println("testing sqlite3...")
-		db, err = gorm.Open(sqlite.Open(filepath.Join(os.TempDir(), "gorm.db")), cfg)
+		db, err = gorm.Open(sqlite.Open("/Users/fengyuwusong/code/gorm/identifier.sqlite"), cfg)
 		if err == nil {
 			db.Exec("PRAGMA foreign_keys = ON")
 		}

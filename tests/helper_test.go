@@ -14,16 +14,18 @@ import (
 )
 
 type Config struct {
-	Account   bool
-	Pets      int
-	Toys      int
-	Company   bool
-	Manager   bool
-	Team      int
-	Languages int
-	Friends   int
-	NamedPet  bool
-	Tools     int
+	Account          bool
+	Pets             int
+	Toys             int
+	Company          bool
+	Manager          bool
+	Team             int
+	Languages        int
+	Friends          int
+	NamedPet         bool
+	Tools            int
+	IsPetHasToy      bool
+	IsNamedPetHasToy bool
 }
 
 func GetUser(name string, config Config) *User {
@@ -41,7 +43,13 @@ func GetUser(name string, config Config) *User {
 	}
 
 	for i := 0; i < config.Pets; i++ {
-		user.Pets = append(user.Pets, &Pet{Name: name + "_pet_" + strconv.Itoa(i+1)})
+		pet := &Pet{Name: name + "_pet_" + strconv.Itoa(i+1)}
+		if config.IsPetHasToy {
+			pet.Toy = Toy{
+				Name: name + "_pet_toy" + strconv.Itoa(i+1),
+			}
+		}
+		user.Pets = append(user.Pets, pet)
 	}
 
 	for i := 0; i < config.Toys; i++ {
@@ -76,6 +84,11 @@ func GetUser(name string, config Config) *User {
 
 	if config.NamedPet {
 		user.NamedPet = &Pet{Name: name + "_namepet"}
+		if config.IsPetHasToy {
+			user.NamedPet.Toy = Toy{
+				Name: name + "_pet_toy",
+			}
+		}
 	}
 
 	return &user

@@ -1,6 +1,7 @@
 package callbacks
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 
@@ -24,6 +25,11 @@ func BeforeDelete(db *gorm.DB) {
 }
 
 func DeleteBeforeAssociations(db *gorm.DB) {
+	var (
+		relations       = db.Statement.Schema.Relationships.Relations
+		nestedDeleteMap = make(map[string][]string)
+	)
+
 	if db.Error == nil && db.Statement.Schema != nil {
 		selectColumns, restricted := db.Statement.SelectAndOmitColumns(true, false)
 		if !restricted {
@@ -34,79 +40,136 @@ func DeleteBeforeAssociations(db *gorm.DB) {
 			if !v {
 				continue
 			}
-
-			rel, ok := db.Statement.Schema.Relationships.Relations[column]
-			if !ok {
-				continue
-			}
-
-			switch rel.Type {
-			case schema.HasOne, schema.HasMany:
-				queryConds := rel.ToQueryConditions(db.Statement.Context, db.Statement.ReflectValue)
-				modelValue := reflect.New(rel.FieldSchema.ModelType).Interface()
-				tx := db.Session(&gorm.Session{NewDB: true}).Model(modelValue)
-				withoutConditions := false
-				if db.Statement.Unscoped {
-					tx = tx.Unscoped()
-				}
-
-				if len(db.Statement.Selects) > 0 {
-					selects := make([]string, 0, len(db.Statement.Selects))
-					for _, s := range db.Statement.Selects {
-						if s == clause.Associations {
-							selects = append(selects, s)
-						} else if columnPrefix := column + "."; strings.HasPrefix(s, columnPrefix) {
-							selects = append(selects, strings.TrimPrefix(s, columnPrefix))
-						}
+			if rel, ok := relations[column]; ok {
+				associationsDelete(db, rel, column)
+			} else {
+				// handle nested select like "Manager.Company"
+				parts := strings.Split(column, ".")
+				if len(parts) > 1 {
+					if rel, ok = relations[parts[0]]; ok {
+						nestedDeleteMap[parts[0]] = append(nestedDeleteMap[parts[0]], parts[1])
 					}
-
-					if len(selects) > 0 {
-						tx = tx.Select(selects)
-					}
-				}
-
-				for _, cond := range queryConds {
-					if c, ok := cond.(clause.IN); ok && len(c.Values) == 0 {
-						withoutConditions = true
-						break
-					}
-				}
-
-				if !withoutConditions && db.AddError(tx.Clauses(clause.Where{Exprs: queryConds}).Delete(modelValue).Error) != nil {
-					return
-				}
-			case schema.Many2Many:
-				var (
-					queryConds     = make([]clause.Expression, 0, len(rel.References))
-					foreignFields  = make([]*schema.Field, 0, len(rel.References))
-					relForeignKeys = make([]string, 0, len(rel.References))
-					modelValue     = reflect.New(rel.JoinTable.ModelType).Interface()
-					table          = rel.JoinTable.Table
-					tx             = db.Session(&gorm.Session{NewDB: true}).Model(modelValue).Table(table)
-				)
-
-				for _, ref := range rel.References {
-					if ref.OwnPrimaryKey {
-						foreignFields = append(foreignFields, ref.PrimaryKey)
-						relForeignKeys = append(relForeignKeys, ref.ForeignKey.DBName)
-					} else if ref.PrimaryValue != "" {
-						queryConds = append(queryConds, clause.Eq{
-							Column: clause.Column{Table: rel.JoinTable.Table, Name: ref.ForeignKey.DBName},
-							Value:  ref.PrimaryValue,
-						})
-					}
-				}
-
-				_, foreignValues := schema.GetIdentityFieldValuesMap(db.Statement.Context, db.Statement.ReflectValue, foreignFields)
-				column, values := schema.ToQueryValues(table, relForeignKeys, foreignValues)
-				queryConds = append(queryConds, clause.IN{Column: column, Values: values})
-
-				if db.AddError(tx.Clauses(clause.Where{Exprs: queryConds}).Delete(modelValue).Error) != nil {
-					return
 				}
 			}
 		}
+		// handle nested delete map
+		for k, colunms := range nestedDeleteMap {
+			var (
+				rel              = relations[k]
+				reflectValue     = db.Statement.ReflectValue
+				relForeignKeys   []string
+				foreignValues    [][]interface{}
+				relForeignFields []*schema.Field
+				foreignFields    []*schema.Field
+				identityMap      = map[string][]reflect.Value{}
+			)
+			tx := db.Table("").Session(&gorm.Session{Context: db.Statement.Context, SkipHooks: db.Statement.SkipHooks})
+			tx.Statement.ReflectValue = db.Statement.ReflectValue
+			tx.Statement.Unscoped = db.Statement.Unscoped
+			for _, ref := range rel.References {
+				if ref.OwnPrimaryKey {
+					relForeignKeys = append(relForeignKeys, ref.ForeignKey.DBName)
+					relForeignFields = append(relForeignFields, ref.ForeignKey)
+					foreignFields = append(foreignFields, ref.PrimaryKey)
+				} else if ref.PrimaryValue != "" {
+					tx = tx.Where(clause.Eq{Column: ref.ForeignKey.DBName, Value: ref.PrimaryValue})
+				} else {
+					relForeignKeys = append(relForeignKeys, ref.PrimaryKey.DBName)
+					relForeignFields = append(relForeignFields, ref.PrimaryKey)
+					foreignFields = append(foreignFields, ref.ForeignKey)
+				}
+			}
+			identityMap, foreignValues = schema.GetIdentityFieldValuesMap(tx.Statement.Context, reflectValue, foreignFields)
+			if len(foreignValues) == 0 {
+				break
+			}
 
+			reflectResults := rel.FieldSchema.MakeSlice().Elem()
+			column, values := schema.ToQueryValues(clause.CurrentTable, relForeignKeys, foreignValues)
+			for i := 0; i < reflectResults.Len(); i++ {
+				idValue := reflectResults.Index(i).FieldByName("id")
+				fmt.Println(idValue)
+			}
+			if len(values) != 0 {
+				if err := db.AddError(tx.Where(clause.IN{Column: column, Values: values}).Find(reflectResults.Addr().Interface()).Error); err != nil {
+					return
+				}
+			}
+			// todo 初始化对应的 tx，包含 reflectResults 的 queryConds
+			// todo 遍历 columns, 使用新生成的 tx 调用 associationsDelete 删除对应 modelValue 下的 column
+			fmt.Println(identityMap)
+			for _, c := range colunms {
+				fmt.Println(c)
+			}
+		}
+	}
+}
+
+func associationsDelete(db *gorm.DB, rel *schema.Relationship, column string) {
+	switch rel.Type {
+	case schema.HasOne, schema.HasMany:
+		queryConds := rel.ToQueryConditions(db.Statement.Context, db.Statement.ReflectValue)
+		modelValue := reflect.New(rel.FieldSchema.ModelType).Interface()
+		tx := db.Session(&gorm.Session{NewDB: true}).Model(modelValue)
+		withoutConditions := false
+		if db.Statement.Unscoped {
+			tx = tx.Unscoped()
+		}
+
+		if len(db.Statement.Selects) > 0 {
+			selects := make([]string, 0, len(db.Statement.Selects))
+			for _, s := range db.Statement.Selects {
+				if s == clause.Associations {
+					selects = append(selects, s)
+				} else if columnPrefix := column + "."; strings.HasPrefix(s, columnPrefix) {
+					selects = append(selects, strings.TrimPrefix(s, columnPrefix))
+				}
+			}
+
+			if len(selects) > 0 {
+				tx = tx.Select(selects)
+			}
+		}
+
+		for _, cond := range queryConds {
+			if c, ok := cond.(clause.IN); ok && len(c.Values) == 0 {
+				withoutConditions = true
+				break
+			}
+		}
+
+		if !withoutConditions && db.AddError(tx.Clauses(clause.Where{Exprs: queryConds}).Delete(modelValue).Error) != nil {
+			return
+		}
+	case schema.Many2Many:
+		var (
+			queryConds     = make([]clause.Expression, 0, len(rel.References))
+			foreignFields  = make([]*schema.Field, 0, len(rel.References))
+			relForeignKeys = make([]string, 0, len(rel.References))
+			modelValue     = reflect.New(rel.JoinTable.ModelType).Interface()
+			table          = rel.JoinTable.Table
+			tx             = db.Session(&gorm.Session{NewDB: true}).Model(modelValue).Table(table)
+		)
+
+		for _, ref := range rel.References {
+			if ref.OwnPrimaryKey {
+				foreignFields = append(foreignFields, ref.PrimaryKey)
+				relForeignKeys = append(relForeignKeys, ref.ForeignKey.DBName)
+			} else if ref.PrimaryValue != "" {
+				queryConds = append(queryConds, clause.Eq{
+					Column: clause.Column{Table: rel.JoinTable.Table, Name: ref.ForeignKey.DBName},
+					Value:  ref.PrimaryValue,
+				})
+			}
+		}
+
+		_, foreignValues := schema.GetIdentityFieldValuesMap(db.Statement.Context, db.Statement.ReflectValue, foreignFields)
+		column, values := schema.ToQueryValues(table, relForeignKeys, foreignValues)
+		queryConds = append(queryConds, clause.IN{Column: column, Values: values})
+
+		if db.AddError(tx.Clauses(clause.Where{Exprs: queryConds}).Delete(modelValue).Error) != nil {
+			return
+		}
 	}
 }
 

@@ -3,6 +3,8 @@ package tests_test
 import (
 	"context"
 	"encoding/json"
+	"log"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -12,6 +14,7 @@ import (
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"gorm.io/gorm/logger"
 	. "gorm.io/gorm/utils/tests"
 )
 
@@ -53,7 +56,7 @@ func TestPreloadWithAssociations(t *testing.T) {
 }
 
 func TestNestedPreload(t *testing.T) {
-	user := *GetUser("nested_preload", Config{Pets: 2})
+	user := *GetUser("nested_preload", Config{Pets: 2, Manager: true})
 
 	for idx, pet := range user.Pets {
 		pet.Toy = Toy{Name: "toy_nested_preload_" + strconv.Itoa(idx+1)}
@@ -71,6 +74,12 @@ func TestNestedPreload(t *testing.T) {
 	DB.Preload(clause.Associations+"."+clause.Associations).Find(&user3, "id = ?", user.ID)
 	CheckUser(t, user3, user)
 
+	DB.Logger = logger.New(log.New(os.Stdout, "\r\n", log.LstdFlags), logger.Config{
+		SlowThreshold:             1,
+		LogLevel:                  logger.Info,
+		IgnoreRecordNotFoundError: false,
+		Colorful:                  true,
+	})
 	var user4 *User
 	DB.Preload("Pets.Toy").Find(&user4, "id = ?", user.ID)
 	CheckUser(t, *user4, user)
@@ -283,6 +292,12 @@ func TestNestedPreloadWithUnscoped(t *testing.T) {
 	}
 
 	var user2 User
+	DB.Logger = logger.New(log.New(os.Stdout, "\r\n", log.LstdFlags), logger.Config{
+		SlowThreshold:             1,
+		LogLevel:                  logger.Info,
+		IgnoreRecordNotFoundError: false,
+		Colorful:                  true,
+	})
 	DB.Preload("Pets.Toy").Find(&user2, "id = ?", user.ID)
 	CheckUser(t, user2, user)
 
